@@ -211,6 +211,13 @@ class Matrix(Sequence[int | float]):
         """Matrix columns."""
         return tuple(self.iter_columns_vector())
 
+    def __round__(self, ndigits: int | None = None) -> Self:
+        """Return round of all elements."""
+        return self.__class__(
+            [round(e, ndigits) for e in self],
+            shape=self.shape,
+        )
+
     def __mul__(self, rhs: int) -> Self:
         """Return scalar multiply by rhs."""
         return self.__class__([e * rhs for e in self], shape=self.shape)
@@ -426,13 +433,80 @@ class Matrix(Sequence[int | float]):
             (self.row_count, rhs.column_count),
         )
 
-    @property
-    def T(self) -> Self:  # noqa: N802
-        """Transpose."""
+    def transpose(self) -> Self:
+        """Return transposed matrix."""
         return self.__class__(
             [element for column in self.iter_columns() for element in column],
             shape=(self.column_count, self.row_count),
         )
+
+    @property
+    def T(self) -> Self:  # noqa: N802
+        """Transpose."""
+        return self.transpose()
+
+    def minor(self, index: tuple[int, int]) -> Self:
+        """Return new matrix without index location."""
+        pos_row, pos_col = index
+        elements = []
+        for ridx, row in enumerate(self.iter_rows()):
+            if ridx == pos_row:
+                continue
+            for cidx, val in enumerate(row):
+                if cidx == pos_col:
+                    continue
+                elements.append(val)
+        return self.__class__(
+            elements,
+            (self.row_count - 1, self.column_count - 1),
+        )
+
+    def determinent(self) -> int | float:
+        """Return the determinent of this matrix."""
+        if self.shape == (1, 1):
+            return self[0, 0]
+        if self.row_count != self.column_count:
+            raise ValueError(f"{self.shape} matrix is not a square matrix")
+        value: int | float = 0
+        adding = True
+        for y in range(self.row_count):
+            value += (
+                ((adding << 1) - 1)
+                * self.minor((0, y)).determinent()
+                * self[0, y]
+            )
+            adding = not adding
+        return value
+
+    def get_pos_cofactor(self, index: tuple[int, int]) -> int | float:
+        """Return cofactor of item at index in this matrix."""
+        return ((((sum(index) & 1) ^ 1) << 1) - 1) * self.minor(
+            index,
+        ).determinent()
+
+    def cofactor(self) -> Matrix:
+        """Return cofactor of self."""
+        return self.__class__(
+            [
+                self.get_pos_cofactor((r, c))
+                for r in range(self.row_count)
+                for c in range(self.column_count)
+            ],
+            self.shape,
+        )
+
+    def adjugate(self) -> Matrix:
+        """Return adjugate of self."""
+        return self.cofactor().transpose()
+
+    adjoint = adjugate
+
+    def inverse(self) -> Matrix:
+        """Return the inverse of this matrix."""
+        det = self.determinent()
+        if det == 0:
+            raise ZeroDivisionError("Determinent of this matrix is zero")
+        return self.adjugate() / det
 
 
 def ask_int(prompt: str | None = None) -> int:
