@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-# Vector - Vector module for various applications.
+# Matrix - Matrix module for various applications.
 # Copyright (C) 2026  CoolCat467
 #
 # This program is free software: you can redistribute it and/or modify
@@ -23,7 +23,7 @@ from __future__ import annotations
 __title__ = "Matrix Module"
 __author__ = "CoolCat467"
 __license__ = "GNU General Public License Version 3"
-__version__ = "0.0.0"
+__version__ = "1.0.0"
 
 from collections.abc import (
     Callable,
