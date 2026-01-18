@@ -262,7 +262,8 @@ class Matrix(Sequence[int | float]):
             self: Matrix,
             rhs: int | float | Iterable[int | float] | Matrix,
         ) -> Matrix:
-            # If rhs is just a number, do map with that same value for every element
+            # If rhs is just a number, do map with that same value for
+            # every element
             if not isinstance(rhs, Iterable):
                 return self.__class__(
                     [map_function(e, rhs) for e in self],
@@ -271,7 +272,8 @@ class Matrix(Sequence[int | float]):
             # Otherwise, check if matrix if matrix check sizes.
             if isinstance(rhs, Matrix) and rhs.shape != self.shape:
                 raise ValueError(
-                    f"Shape of right hand side matrix {rhs.shape} does not match own shape {self.shape}",
+                    f"Shape of right hand side matrix {rhs.shape} does "
+                    f"not match own shape {self.shape}",
                 )
             return self.__class__(
                 [
@@ -303,10 +305,12 @@ class Matrix(Sequence[int | float]):
             for e in self:
                 if not isinstance(e, int):
                     raise ValueError(
-                        "All elements of matrix must be integers for this operation.",
+                        "All elements of matrix must be integers for "
+                        "this operation.",
                     )
             self_int = cast("Iterable[int]", self)
-            # If rhs is just a number, do map with that same value for every element
+            # If rhs is just a number, do map with that same value for
+            # every element
             if not isinstance(rhs, Iterable):
                 return self.__class__(
                     [map_function(e, rhs) for e in self_int],
@@ -317,14 +321,16 @@ class Matrix(Sequence[int | float]):
             for e in rhs:
                 if not isinstance(e, int):
                     raise ValueError(
-                        "All elements of right hand side must be integers for this operation.",
+                        "All elements of right hand side must be "
+                        "integers for this operation.",
                     )
                 rhs_int.append(e)
 
             # Otherwise, check if matrix if matrix check sizes.
             if isinstance(rhs, Matrix) and rhs.shape != self.shape:
                 raise ValueError(
-                    f"Shape of right hand side matrix {rhs.shape} does not match own shape {self.shape}",
+                    f"Shape of right hand side matrix {rhs.shape} does "
+                    f"not match own shape {self.shape}",
                 )
             return self.__class__(
                 [
@@ -450,7 +456,7 @@ def ask_float(prompt: str | None = None) -> float:
 
 
 def get_matrix() -> Matrix:
-    """Create matrix from user input.
+    """Return matrix from user input.
 
     Creates and returns a matrix from user input such that the shape
     and dimension is determined by the user.
