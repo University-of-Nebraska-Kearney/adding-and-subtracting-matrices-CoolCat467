@@ -36,17 +36,32 @@ from collections.abc import (
 from dataclasses import dataclass
 from functools import update_wrapper
 from math import ceil, floor, sumprod, trunc
-from typing import TYPE_CHECKING, cast, overload
+from typing import TYPE_CHECKING, TypeAlias, TypeGuard, cast, overload
 
 if TYPE_CHECKING:
     from typing_extensions import Self
 
 
+Number: TypeAlias = int | float  # | complex
+
+
+def check_int_sequence(sequence: Sequence[object]) -> TypeGuard[Sequence[int]]:
+    """Return True if all elements of given sequence are integers."""
+    return all(isinstance(e, int) for e in sequence)
+
+
+def check_int_float_sequence(
+    sequence: Sequence[object],
+) -> TypeGuard[Sequence[int | float]]:
+    """Return True if all elements of given sequence are int or float."""
+    return all(isinstance(e, (int, float)) for e in sequence)
+
+
 @dataclass(repr=False, slots=True)
-class Matrix(Sequence[int | float]):
+class Matrix(Sequence[Number]):
     """Matrix dataclass."""
 
-    data: MutableSequence[int | float]
+    data: MutableSequence[Number]
     shape: tuple[int, int]
 
     def __repr__(self) -> str:
@@ -55,17 +70,23 @@ class Matrix(Sequence[int | float]):
         if self.row_count == 1:
             data_repr = repr(self.data)
         else:
-            data_repr = "[\n"
+            start, end = "(", ")"
+            if type(self.data) not in (tuple, list):
+                start = f"{self.data.__class__.__name__}(("
+                end = "))"
+            elif type(self.data) is list:
+                start, end = "[", "]"
+            data_repr = f"{start}\n"
             for row in self.iter_rows():
                 data_repr += "  " + ", ".join(map(repr, row)) + ",\n"
-            data_repr += "]"
+            data_repr += end
         return f"{self.__class__.__name__}({data_repr}, shape={self.shape!r})"
 
     @classmethod
     def zeros(cls, width: int, height: int) -> Self:
         """Create matrix of zeros."""
         return cls(
-            cast("MutableSequence[int | float]", [0] * width * height),
+            cast("MutableSequence[Number]", [0] * width * height),
             shape=(width, height),
         )
 
@@ -87,7 +108,7 @@ class Matrix(Sequence[int | float]):
         """Number of columns."""
         return self.shape[1]
 
-    def __iter__(self) -> Iterator[int | float]:
+    def __iter__(self) -> Iterator[Number]:
         """Yield matrix elements."""
         yield from self.data
 
@@ -95,51 +116,154 @@ class Matrix(Sequence[int | float]):
         """Return the number of elements in matrix."""
         return len(self.data)
 
+    def _internal_data_from_iter(
+        self,
+        iterable: Iterable[Number],
+    ) -> MutableSequence[Number]:
+        """Return new internal data instance from iterable."""
+        data_type = type(self.data)
+        return data_type(iterable)  # type: ignore[call-arg]
+
+    def _from_iter_new_shape(
+        self,
+        iterable: Iterable[Number],
+        shape: tuple[int, int],
+    ) -> Self:
+        """Return new matrix from iterable and shape."""
+        return self.__class__(
+            self._internal_data_from_iter(iterable),
+            shape=shape,
+        )
+
+    def _from_iter(self, iterable: Iterable[Number]) -> Self:
+        """Return new matrix from iterable, maintaining current shape."""
+        return self._from_iter_new_shape(
+            iterable,
+            shape=self.shape,
+        )
+
+    def _get_internal_index(self, row: int, column: int) -> int:
+        """Return internal position for element at given row and column."""
+        if row >= self.row_count:
+            raise IndexError(
+                f"row {row} is out of bounds for {self.shape} matrix",
+            )
+        if column >= self.column_count:
+            raise IndexError(
+                f"column {column} is out of bounds for {self.shape} matrix",
+            )
+        return self.row_count * row + column
+
+    def _convert_slice_to_range(
+        self,
+        row: int | slice[int | None, int | None, int | None],
+        column: int | slice[int | None, int | None, int | None],
+    ) -> tuple[range, range]:
+        """Return row and column ranges from associated slices / indexes."""
+        if not isinstance(row, slice):
+            if row < 0:
+                row += self.row_count
+            row = slice(row, row + 1)
+        if not isinstance(column, slice):
+            if column < 0:
+                column += self.column_count
+            column = slice(column, column + 1)
+        return (
+            range(*row.indices(self.row_count)),
+            range(*column.indices(self.column_count)),
+        )
+
+    def _yield_internal_index_slice(
+        self,
+        row_range: range,
+        column_range: range,
+    ) -> Generator[int, None, None]:
+        """Yield internal positions for row and column slices."""
+        for row in row_range:
+            for column in column_range:
+                yield self._get_internal_index(row, column)
+
     @overload
-    def __getitem__(self, index: int | tuple[int, int], /) -> int | float: ...
+    def __getitem__(self, index: int, /) -> Number: ...
+    @overload
+    def __getitem__(self, index: tuple[int, int], /) -> Number: ...  # type: ignore[overload-overlap]
     @overload
     def __getitem__(
         self,
         index: slice[int | None, int | None, int | None],
         /,
-    ) -> tuple[int | float, ...]: ...
+    ) -> tuple[Number, ...]: ...
+    @overload
+    def __getitem__(
+        self,
+        index: tuple[
+            int | slice[int | None, int | None, int | None],
+            int | slice[int | None, int | None, int | None],
+        ],
+        /,
+    ) -> Self: ...
 
     def __getitem__(
         self,
         index: int
         | tuple[int, int]
+        | tuple[
+            int | slice[int | None, int | None, int | None],
+            int | slice[int | None, int | None, int | None],
+        ]
         | slice[int | None, int | None, int | None],
         /,
-    ) -> int | float | tuple[int | float, ...]:
+    ) -> Number | tuple[Number, ...] | Self:
         """Return value at given index."""
         if isinstance(index, slice):
             return self._getitem_slice(index)
         if isinstance(index, tuple):
             row, column = index
-            # if isinstance(row, int) and isinstance(column, int):
-            return self.data[self.row_count * row + column]
+            if isinstance(row, int) and isinstance(column, int):
+                return self.data[self._get_internal_index(row, column)]
+            row_range, column_range = self._convert_slice_to_range(row, column)
+            return self._from_iter_new_shape(
+                (
+                    self.data[i]
+                    for i in self._yield_internal_index_slice(
+                        row_range,
+                        column_range,
+                    )
+                ),
+                shape=(len(row_range), len(column_range)),
+            )
         return self.data[index]
 
     def _getitem_slice(
         self,
         slice_: slice[int | None, int | None, int | None],
-    ) -> tuple[int | float, ...]:
+    ) -> tuple[Number, ...]:
         """Return dynamic array of slice elements."""
         slice_range = range(*slice_.indices(len(self)))
-        return tuple(self[x] for x in slice_range)
+        return tuple(self.data[i] for i in slice_range)
 
     @overload
     def __setitem__(
         self,
         index: int | tuple[int, int],
-        value: int | float,
+        value: Number,
         /,
     ) -> None: ...
     @overload
     def __setitem__(
         self,
         index: slice[int | None, int | None, int | None],
-        value: Iterable[int | float],
+        value: Iterable[Number],
+        /,
+    ) -> None: ...
+    @overload
+    def __setitem__(
+        self,
+        index: tuple[
+            int | slice[int | None, int | None, int | None],
+            int | slice[int | None, int | None, int | None],
+        ],
+        value: Iterable[Number],
         /,
     ) -> None: ...
 
@@ -147,8 +271,12 @@ class Matrix(Sequence[int | float]):
         self,
         index: int
         | tuple[int, int]
+        | tuple[
+            int | slice[int | None, int | None, int | None],
+            int | slice[int | None, int | None, int | None],
+        ]
         | slice[int | None, int | None, int | None],
-        value: int | float | Iterable[int | float],
+        value: Number | Iterable[Number],
         /,
     ) -> None:
         """Set item at given index to given value."""
@@ -157,17 +285,33 @@ class Matrix(Sequence[int | float]):
                 raise ValueError("slice set item value must be iterable")
             self._setitem_slice(index, value)
             return
-        assert not isinstance(value, Iterable)
         if isinstance(index, tuple):
             row, column = index
-            self.data[self.row_count * row + column] = value
+            if isinstance(row, int) and isinstance(column, int):
+                assert not isinstance(value, Iterable)
+                self.data[self._get_internal_index(row, column)] = value
+                return
+            row_range, column_range = self._convert_slice_to_range(row, column)
+            try:
+                assert isinstance(value, Iterable)
+                for i, v in zip(
+                    self._yield_internal_index_slice(row_range, column_range),
+                    value,
+                    strict=True,
+                ):
+                    self.data[i] = v
+            except ValueError as exc:
+                raise ValueError(
+                    "slice element count is not the same size as new element iterable",
+                ) from exc
         else:
+            assert not isinstance(value, Iterable)
             self.data[index] = value
 
     def _setitem_slice(
         self,
         slice_: slice[int | None, int | None, int | None],
-        iterable: Iterable[int | float],
+        iterable: Iterable[Number],
     ) -> None:
         """Overwrite multiple elements at once."""
         for index, item in zip(
@@ -175,9 +319,9 @@ class Matrix(Sequence[int | float]):
             iterable,
             strict=True,
         ):
-            self[index] = item
+            self.data[index] = item
 
-    def iter_rows(self) -> Generator[MutableSequence[int | float], None, None]:
+    def iter_rows(self) -> Generator[MutableSequence[Number], None, None]:
         """Yield matrix rows."""
         for row in range(self.row_count):
             yield self.data[
@@ -186,7 +330,7 @@ class Matrix(Sequence[int | float]):
 
     def iter_columns(
         self,
-    ) -> Generator[MutableSequence[int | float], None, None]:
+    ) -> Generator[MutableSequence[Number], None, None]:
         """Yield matrix columns."""
         for col in range(self.column_count):
             yield self.data[col :: self.column_count]
@@ -194,12 +338,18 @@ class Matrix(Sequence[int | float]):
     def iter_rows_vector(self) -> Generator[Self, None, None]:
         """Yield matrix rows as vectors."""
         for row_elements in self.iter_rows():
-            yield self.__class__(row_elements, shape=(1, self.column_count))
+            yield self._from_iter_new_shape(
+                row_elements,
+                shape=(1, self.column_count),
+            )
 
     def iter_columns_vector(self) -> Generator[Self, None, None]:
         """Yield matrix columns as vectors."""
         for column_elements in self.iter_columns():
-            yield self.__class__(column_elements, shape=(self.row_count, 1))
+            yield self._from_iter_new_shape(
+                column_elements,
+                shape=(self.row_count, 1),
+            )
 
     @property
     def rows(self) -> tuple[Self, ...]:
@@ -213,81 +363,74 @@ class Matrix(Sequence[int | float]):
 
     def __round__(self, ndigits: int | None = None) -> Self:
         """Return round of all elements."""
-        return self.__class__(
-            [round(e, ndigits) for e in self],
-            shape=self.shape,
-        )
+        assert check_int_float_sequence(self.data)
+        return self._from_iter(round(e, ndigits) for e in self.data)
 
     def __mul__(self, rhs: int) -> Self:
         """Return scalar multiply by rhs."""
-        return self.__class__([e * rhs for e in self], shape=self.shape)
+        return self._from_iter(e * rhs for e in self.data)
 
     def __abs__(self) -> Self:
         """Return absolute value of all elements."""
-        return self.__class__(list(map(abs, self)), shape=self.shape)
+        return self._from_iter(map(abs, self.data))
 
     def __ceil__(self) -> Self:
         """Return ceiling of all elements."""
-        return self.__class__(list(map(ceil, self)), shape=self.shape)
+        assert check_int_float_sequence(self.data)
+        return self._from_iter(map(ceil, self.data))
 
     def __floor__(self) -> Self:
         """Return ceiling of all elements."""
-        return self.__class__(list(map(floor, self)), shape=self.shape)
+        assert check_int_float_sequence(self.data)
+        return self._from_iter(map(floor, self.data))
 
     def __trunc__(self) -> Self:
         """Return truncate of all elements."""
-        return self.__class__(list(map(trunc, self)), shape=self.shape)
+        assert check_int_float_sequence(self.data)
+        return self._from_iter(map(trunc, self.data))
 
     def __invert__(self) -> Self:
         """Return bitwise invert of all elements."""
-        assert all(isinstance(e, int) for e in self), (
-            "Invert does not work on floats."
-        )
-        return self.__class__(
-            [~e for e in cast("Iterable[int]", self)],
-            shape=self.shape,
-        )
+        if not check_int_sequence(self.data):
+            raise ValueError(
+                "All elements of {self.__class__.__name__} must be integers for this operation.",
+            )
+        return self._from_iter(~e for e in self.data)
 
     def __pos__(self) -> Self:
         """Return positive of all elements."""
-        return self.__class__([+e for e in self], shape=self.shape)
+        return self._from_iter(+e for e in self.data)
 
     def __neg__(self) -> Self:
         """Return negation of all elements."""
-        return self.__class__([-e for e in self], shape=self.shape)
+        return self._from_iter(-e for e in self.data)
 
     @staticmethod
     def _scalar_op_decorator(
-        map_function: Callable[[int | float, int | float], int | float],
+        map_function: Callable[[Number, Number], Number],
     ) -> Callable[
-        [Matrix, int | float | Iterable[int | float] | Matrix],
+        [Matrix, Number | Iterable[Number] | Matrix],
         Matrix,
     ]:
         """Return wrapper for scalar operation."""
 
         def wrapper(
             self: Matrix,
-            rhs: int | float | Iterable[int | float] | Matrix,
+            rhs: Number | Iterable[Number] | Matrix,
         ) -> Matrix:
             # If rhs is just a number, do map with that same value for
             # every element
             if not isinstance(rhs, Iterable):
-                return self.__class__(
-                    [map_function(e, rhs) for e in self],
-                    shape=self.shape,
-                )
+                return self._from_iter(map_function(e, rhs) for e in self)
             # Otherwise, check if matrix if matrix check sizes.
             if isinstance(rhs, Matrix) and rhs.shape != self.shape:
                 raise ValueError(
                     f"Shape of right hand side matrix {rhs.shape} does "
                     f"not match own shape {self.shape}",
                 )
-            return self.__class__(
-                [
-                    map_function(e, rhse)
-                    for e, rhse in zip(self, rhs, strict=True)
-                ],
-                shape=self.shape,
+            return self._from_iter(
+                map_function(e, rhse)
+                for e, rhse in zip(self, rhs, strict=True)
             )
 
         # Not using `functools.wraps` because something is not correct
@@ -309,29 +452,20 @@ class Matrix(Sequence[int | float]):
 
         def wrapper(self: Matrix, rhs: int | Iterable[int] | Matrix) -> Matrix:
             # Make sure all items of matrix are integers
-            for e in self:
-                if not isinstance(e, int):
-                    raise ValueError(
-                        "All elements of matrix must be integers for "
-                        "this operation.",
-                    )
-            self_int = cast("Iterable[int]", self)
+            if not check_int_sequence(self.data):
+                raise ValueError(
+                    "All elements of {self.__class__.__name__} must be integers for this operation.",
+                )
             # If rhs is just a number, do map with that same value for
             # every element
             if not isinstance(rhs, Iterable):
-                return self.__class__(
-                    [map_function(e, rhs) for e in self_int],
-                    shape=self.shape,
-                )
+                return self._from_iter(map_function(e, rhs) for e in self.data)
 
-            rhs_int: list[int] = []
-            for e in rhs:
-                if not isinstance(e, int):
-                    raise ValueError(
-                        "All elements of right hand side must be "
-                        "integers for this operation.",
-                    )
-                rhs_int.append(e)
+            rhs_int: tuple[Number, ...] = tuple(rhs)
+            if not check_int_sequence(rhs_int):
+                raise ValueError(
+                    "All elements of right hand side must be integers for this operation.",
+                )
 
             # Otherwise, check if matrix if matrix check sizes.
             if isinstance(rhs, Matrix) and rhs.shape != self.shape:
@@ -339,12 +473,9 @@ class Matrix(Sequence[int | float]):
                     f"Shape of right hand side matrix {rhs.shape} does "
                     f"not match own shape {self.shape}",
                 )
-            return self.__class__(
-                [
-                    map_function(e, rhse)
-                    for e, rhse in zip(self_int, rhs_int, strict=True)
-                ],
-                shape=self.shape,
+            return self._from_iter(
+                map_function(e, rhse)
+                for e, rhse in zip(self.data, rhs_int, strict=True)
             )
 
         # Not using `functools.wraps` because something is not correct
@@ -359,36 +490,36 @@ class Matrix(Sequence[int | float]):
         return wrapper
 
     @_scalar_op_decorator
-    def __add__(x: int | float, y: int | float) -> int | float:  # noqa: N805
+    def __add__(x: Number, y: Number) -> Number:  # noqa: N805
         """Return scalar add by rhs."""
         return x + y
 
     @_scalar_op_decorator
-    def __sub__(x: int | float, y: int | float) -> int | float:  # noqa: N805
+    def __sub__(x: Number, y: Number) -> Number:  # noqa: N805
         """Return scalar subtract by rhs."""
         return x - y
 
     @_scalar_op_decorator
-    def __truediv__(x: int | float, y: int | float) -> int | float:  # noqa: N805
+    def __truediv__(x: Number, y: Number) -> Number:  # noqa: N805
         """Return scalar floating point division by rhs."""
         return x / y
 
     @_scalar_op_decorator
-    def __floordiv__(x: int | float, y: int | float) -> int | float:  # noqa: N805
+    def __floordiv__(x: Number, y: Number) -> Number:  # noqa: N805
         """Return scalar floor division by rhs."""
         return x // y
 
     @_scalar_op_decorator
-    def __mod__(x: int | float, y: int | float) -> int | float:  # noqa: N805
+    def __mod__(x: Number, y: Number) -> Number:  # noqa: N805
         """Return scalar modulo by rhs."""
         return x % y
 
     @_scalar_op_decorator
     def __pow__(
-        x: int | float,  # noqa: N805
-        y: int | float,
-        # mod: int | float | None = None,
-    ) -> int | float:
+        x: Number,  # noqa: N805
+        y: Number,
+        # mod: Number | None = None,
+    ) -> Number:
         """Return scalar modulo by rhs."""
         return pow(x, y)  # , mod)
 
@@ -424,19 +555,19 @@ class Matrix(Sequence[int | float]):
                 f"Cannot multiply {self.shape} matrix by {rhs.shape} matrix.",
             )
 
-        return self.__class__(
-            [
+        return self._from_iter_new_shape(
+            (
                 sumprod(row, column)
                 for column in rhs.iter_columns()
                 for row in self.iter_rows()
-            ],
+            ),
             (self.row_count, rhs.column_count),
         )
 
     def transpose(self) -> Self:
-        """Return transposed matrix."""
-        return self.__class__(
-            [element for column in self.iter_columns() for element in column],
+        """Return transpose of matrix."""
+        return self._from_iter_new_shape(
+            (element for column in self.iter_columns() for element in column),
             shape=(self.column_count, self.row_count),
         )
 
@@ -445,29 +576,34 @@ class Matrix(Sequence[int | float]):
         """Transpose."""
         return self.transpose()
 
+    def _yield_minor_elements(
+        self,
+        remove_row: int,
+        remove_column: int,
+    ) -> Generator[Number, None, None]:
+        """Yield elements of minor matrix given row and column to remove."""
+        for row_index, row in enumerate(self.iter_rows()):
+            if row_index == remove_row:
+                continue
+            for column_index, element in enumerate(row):
+                if column_index == remove_column:
+                    continue
+                yield element
+
     def minor(self, index: tuple[int, int]) -> Self:
         """Return new matrix without index location."""
-        pos_row, pos_col = index
-        elements = []
-        for ridx, row in enumerate(self.iter_rows()):
-            if ridx == pos_row:
-                continue
-            for cidx, val in enumerate(row):
-                if cidx == pos_col:
-                    continue
-                elements.append(val)
-        return self.__class__(
-            elements,
+        return self._from_iter_new_shape(
+            self._yield_minor_elements(*index),
             (self.row_count - 1, self.column_count - 1),
         )
 
-    def determinent(self) -> int | float:
+    def determinent(self) -> Number:
         """Return the determinent of this matrix."""
         if self.shape == (1, 1):
             return self[0, 0]
         if self.row_count != self.column_count:
             raise ValueError(f"{self.shape} matrix is not a square matrix")
-        value: int | float = 0
+        value: Number = 0
         adding = True
         for y in range(self.row_count):
             value += (
@@ -478,7 +614,7 @@ class Matrix(Sequence[int | float]):
             adding = not adding
         return value
 
-    def get_pos_cofactor(self, index: tuple[int, int]) -> int | float:
+    def get_pos_cofactor(self, index: tuple[int, int]) -> Number:
         """Return cofactor of item at index in this matrix."""
         return ((((sum(index) & 1) ^ 1) << 1) - 1) * self.minor(
             index,
@@ -486,13 +622,10 @@ class Matrix(Sequence[int | float]):
 
     def cofactor(self) -> Matrix:
         """Return cofactor of self."""
-        return self.__class__(
-            [
-                self.get_pos_cofactor((r, c))
-                for r in range(self.row_count)
-                for c in range(self.column_count)
-            ],
-            self.shape,
+        return self._from_iter(
+            self.get_pos_cofactor((r, c))
+            for r in range(self.row_count)
+            for c in range(self.column_count)
         )
 
     def adjugate(self) -> Matrix:
